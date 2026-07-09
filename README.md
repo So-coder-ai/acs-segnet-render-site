@@ -34,18 +34,3 @@ uvicorn app:app --reload
 ```
 
 Open `http://127.0.0.1:8000`.
-
-## Deploy on Render
-
-1. Push this folder to a GitHub repository.
-2. Keep the three checkpoint files in `checkpoints/`, or store them externally and download them during build.
-3. In Render, choose New -> Blueprint and select this repo. Render will read `render.yaml`.
-4. Use at least a Standard instance. ACS-SegNet with SegFormer-B2 is heavy for free CPU instances.
-5. After deployment, visit `/health` to confirm the ACS-SegNet repo and checkpoints are available.
-
-## Notes
-
-- First inference can be slow because the models load lazily.
-- If your checkpoints were trained with `unet_encoder_weights='imagenet'`, inference still uses `None` before loading weights to avoid unnecessary downloads at startup.
-- If strict checkpoint loading fails, verify that the training notebook config matches `CFG` in `app.py`.
-- Three ACS-SegNet checkpoints are large; make sure your Git host/deployment path supports files around 200 MB each, or use Git LFS/external storage.
