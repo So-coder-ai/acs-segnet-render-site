@@ -21,12 +21,18 @@ form.addEventListener("submit", async (event) => {
   const body = new FormData();
   body.append("file", file);
   button.disabled = true;
-  setMessage("Running ACS-SegNet inference… this can take a moment on CPU.");
+  setMessage("Running ACS-SegNet inferenceâ€¦ this can take a moment on CPU.");
 
   try {
     const response = await fetch("/predict", { method: "POST", body });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Prediction failed.");
+    const raw = await response.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { detail: raw };
+    }
+    if (!response.ok) throw new Error(data.detail || `Prediction failed with HTTP ${response.status}. Check Render logs for the backend traceback.`);
 
     document.querySelector("#input-img").src = data.input;
     document.querySelector("#mask-img").src = data.mask;
