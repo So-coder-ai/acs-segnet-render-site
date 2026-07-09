@@ -1,6 +1,7 @@
 import os
 import sys
 import uuid
+import gc
 from pathlib import Path
 
 import cv2
@@ -32,6 +33,7 @@ CFG = {
 }
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "1")))
 DEFAULT_CHECKPOINTS = [
     BASE_DIR / "checkpoints" / "ACSSegNet_fold0_best.pth",
     BASE_DIR / "checkpoints" / "ACSSegNet_fold1_best.pth",
@@ -39,6 +41,7 @@ DEFAULT_CHECKPOINTS = [
 ]
 MODEL_PATHS_ENV = os.getenv("MODEL_PATHS")
 MODEL_PATH = Path(os.getenv("MODEL_PATH", BASE_DIR / "checkpoints" / "ACSSegNet_best.pth"))
+CACHE_MODELS = os.getenv("CACHE_MODELS", "0") == "1"
 
 
 def configured_checkpoint_paths():
@@ -146,6 +149,26 @@ def get_models():
         raise
 
 
+def predict_probability(tensor):
+    checkpoint_paths = configured_checkpoint_paths()
+    if CACHE_MODELS:
+        models = get_models()
+        with torch.no_grad():
+            probs = [torch.sigmoid(model(tensor))[0, 0].detach().cpu().numpy() for model in models]
+        return np.mean(probs, axis=0), len(models)
+
+    probs = []
+    for checkpoint_path in checkpoint_paths:
+        model = load_state_into_model(checkpoint_path)
+        with torch.no_grad():
+            probs.append(torch.sigmoid(model(tensor))[0, 0].detach().cpu().numpy())
+        del model
+        gc.collect()
+        if DEVICE.type == "cuda":
+            torch.cuda.empty_cache()
+    return np.mean(probs, axis=0), len(checkpoint_paths)
+
+
 def read_rgb_image(file_bytes: bytes):
     try:
         pil = Image.open(__import__("io").BytesIO(file_bytes)).convert("RGB")
@@ -198,6 +221,8 @@ def health():
         "acs_repo": str(ACS_REPO_DIR),
         "acs_repo_exists": repo_exists,
         "model_loaded": _models is not None,
+        "cache_models": CACHE_MODELS,
+        "torch_num_threads": torch.get_num_threads(),
         "model_error": _model_error,
     }
 
@@ -213,10 +238,7 @@ async def predict(file: UploadFile = File(...)):
     tensor = torch.tensor((resized.astype(np.float32) / 255.0).transpose(2, 0, 1)).unsqueeze(0).to(DEVICE)
 
     try:
-        models = get_models()
-        with torch.no_grad():
-            probs = [torch.sigmoid(model(tensor))[0, 0].detach().cpu().numpy() for model in models]
-            prob = np.mean(probs, axis=0)
+        prob, models_used = predict_probability(tensor)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -243,7 +265,7 @@ async def predict(file: UploadFile = File(...)):
             "id": result_id,
             "foreground_percent": round(foreground * 100, 3),
             "threshold": CFG["threshold"],
-            "models_used": len(get_models()),
+            "models_used": models_used,
             "input": f"/static/results/{input_path.name}",
             "mask": f"/static/results/{mask_path.name}",
             "probability": f"/static/results/{heat_path.name}",

@@ -14,3 +14,9 @@ services:
         value: 256
       - key: MASK_THRESHOLD
         value: 0.5
+      - key: CACHE_MODELS
+        value: 0
+      - key: TORCH_NUM_THREADS
+        value: 1
+      - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: 1
