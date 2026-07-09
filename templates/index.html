@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ACS-SegNet H&E Mask Segmentation</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Histopathology AI</p>
+          <h1>H&E stained image mask segmentation</h1>
+          <p class="lede">Upload an H&E tile and run ACS-SegNet to generate a binary mask, probability heatmap, and overlay preview.</p>
+          <div class="meta">
+            <span>Device: {{ device }}</span>
+            <span>Input size: {{ img_size }}×{{ img_size }}</span>
+          </div>
+        </div>
+        <div class="status-card">
+          <strong>Checkpoint</strong>
+          <span>{{ model_path }}</span>
+          <small>Place your trained <code>.pth</code> file here before deployment.</small>
+        </div>
+      </section>
+
+      <section class="panel">
+        <form id="upload-form">
+          <label class="drop-zone" for="file-input">
+            <input id="file-input" name="file" type="file" accept="image/*" required />
+            <span class="icon">＋</span>
+            <strong>Choose an H&E image</strong>
+            <small>PNG, JPG, or TIFF exported as a browser-readable image</small>
+          </label>
+          <button id="submit-button" type="submit">Generate segmentation</button>
+        </form>
+        <p id="message" class="message"></p>
+      </section>
+
+      <section id="results" class="results hidden">
+        <article>
+          <h2>Input</h2>
+          <img id="input-img" alt="Uploaded H&E input" />
+        </article>
+        <article>
+          <h2>Binary Mask</h2>
+          <img id="mask-img" alt="Predicted binary segmentation mask" />
+        </article>
+        <article>
+          <h2>Probability</h2>
+          <img id="prob-img" alt="Predicted probability heatmap" />
+        </article>
+        <article>
+          <h2>Overlay</h2>
+          <img id="overlay-img" alt="Mask overlay on input image" />
+        </article>
+      </section>
+
+      <section id="metrics" class="metrics hidden">
+        <span>Foreground coverage</span>
+        <strong id="foreground"></strong>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
