@@ -8,14 +8,14 @@ import cv2
 import numpy as np
 import torch
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-RESULTS_DIR = STATIC_DIR / "results"
+RESULTS_DIR = Path(os.getenv("RESULTS_DIR", "/tmp/acs-segnet-results" if os.getenv("VERCEL") else STATIC_DIR / "results"))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 ACS_REPO_DIR = Path(os.getenv("ACS_REPO_DIR", BASE_DIR / "ACS-SegNet"))
@@ -44,13 +44,17 @@ MODEL_PATH = Path(os.getenv("MODEL_PATH", BASE_DIR / "checkpoints" / "ACSSegNet_
 CACHE_MODELS = os.getenv("CACHE_MODELS", "0") == "1"
 
 
+def project_path(path: Path):
+    return path if path.is_absolute() else BASE_DIR / path
+
+
 def configured_checkpoint_paths():
     if MODEL_PATHS_ENV:
-        return [Path(path.strip()) for path in MODEL_PATHS_ENV.split(",") if path.strip()]
+        return [project_path(Path(path.strip())) for path in MODEL_PATHS_ENV.split(",") if path.strip()]
     existing_folds = [path for path in DEFAULT_CHECKPOINTS if path.exists()]
     if existing_folds:
         return existing_folds
-    return [MODEL_PATH]
+    return [project_path(MODEL_PATH)]
 
 app = FastAPI(title="ACS-SegNet H&E Mask Segmentation")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -227,6 +231,14 @@ def health():
     }
 
 
+@app.get("/results/{filename}", include_in_schema=False)
+def result_file(filename: str):
+    path = RESULTS_DIR / filename
+    if not path.exists() or path.parent != RESULTS_DIR:
+        raise HTTPException(status_code=404, detail="Result file not found.")
+    return FileResponse(path)
+
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -266,9 +278,9 @@ async def predict(file: UploadFile = File(...)):
             "foreground_percent": round(foreground * 100, 3),
             "threshold": CFG["threshold"],
             "models_used": models_used,
-            "input": f"/static/results/{input_path.name}",
-            "mask": f"/static/results/{mask_path.name}",
-            "probability": f"/static/results/{heat_path.name}",
-            "overlay": f"/static/results/{overlay_path.name}",
+            "input": f"/results/{input_path.name}",
+            "mask": f"/results/{mask_path.name}",
+            "probability": f"/results/{heat_path.name}",
+            "overlay": f"/results/{overlay_path.name}",
         }
     )
