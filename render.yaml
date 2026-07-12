@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: acs-segnet
+    env: python
+    plan: standard
+    buildCommand: "bash build.sh"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MODEL_PATHS
+        value: checkpoints/ACSSegNet_fold1_best.pth
+      - key: IMG_SIZE
+        value: 256
+      - key: MASK_THRESHOLD
+        value: 0.5
+      - key: CACHE_MODELS
+        value: 0
+      - key: TORCH_NUM_THREADS
+        value: 1
+      - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: 1
