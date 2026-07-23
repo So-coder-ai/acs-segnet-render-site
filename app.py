@@ -2,6 +2,7 @@ import os
 import sys
 import uuid
 import gc
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 _models = None
 _model_error = None
+INFERENCE_LOCK = threading.Lock()
 
 
 def build_model():
@@ -274,10 +276,17 @@ async def predict(file: UploadFile = File(...)):
     resized = np.array(Image.fromarray(image).resize((CFG["img_size"], CFG["img_size"]), Image.Resampling.LANCZOS))
     tensor = torch.from_numpy((resized.astype(np.float32) / 255.0).transpose(2, 0, 1)).unsqueeze(0).to(DEVICE, dtype=MODEL_DTYPE)
 
+    if not INFERENCE_LOCK.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="A segmentation is already running. Please wait for it to finish before uploading another image.",
+        )
     try:
         prob, models_used = predict_probability(tensor)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        INFERENCE_LOCK.release()
 
     mask_small = (prob > CFG["threshold"]).astype(np.uint8) * 255
     mask_full = np.array(Image.fromarray(mask_small).resize((original_w, original_h), Image.Resampling.NEAREST))
