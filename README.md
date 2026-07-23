@@ -1,41 +1,6 @@
----
-title: ACS-SegNet
-emoji: 🧫
-colorFrom: green
-colorTo: blue
-sdk: gradio
-sdk_version: 4.44.1
-app_file: gradio_app.py
-pinned: false
----
-
 # ACS-SegNet H&E Segmentation Website
 
 FastAPI website for uploading H&E stained images and generating ACS-SegNet binary masks, probability heatmaps, and overlays.
-
-## Hugging Face Space Deployment
-
-Use a Gradio Space on the free CPU Basic hardware. It has much more memory than Render Free and can run this checkpoint without Docker.
-
-Space repo:
-
-```text
-Shiv89dalkd/Acs_Segnet
-```
-
-Push this GitHub repo to the Space repo with Git LFS enabled so the `.pth` checkpoint is uploaded too. The Space runs `gradio_app.py`, downloads the ACS-SegNet source code on startup, patches it for offline SegFormer initialization, creates the FP16 checkpoint if needed, and queues requests one at a time.
-
-Optional Space variables:
-
-```text
-MODEL_PATHS=checkpoints/ACSSegNet_fold1_best.fp16.pth
-CACHE_MODELS=1
-MODEL_DTYPE=float16
-TORCH_NUM_THREADS=1
-IMG_SIZE=256
-MASK_THRESHOLD=0.5
-HF_HUB_DISABLE_SYMLINKS_WARNING=1
-```
 
 ## Render Deployment
 

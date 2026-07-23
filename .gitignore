@@ -3,6 +3,5 @@ __pycache__/
 *.pyc
 static/results/
 .vercel/
-ACS-SegNet/
 checkpoints/*.fp16.pth
 checkpoints/*.pth.tmp
