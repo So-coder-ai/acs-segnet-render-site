@@ -44,7 +44,7 @@ DEFAULT_CHECKPOINTS = [
 ]
 MODEL_PATHS_ENV = os.getenv("MODEL_PATHS")
 MODEL_PATH = Path(os.getenv("MODEL_PATH", BASE_DIR / "checkpoints" / "ACSSegNet_best.pth"))
-CACHE_MODELS = os.getenv("CACHE_MODELS", "0") == "1"
+CACHE_MODELS = os.getenv("CACHE_MODELS", "1") == "1"
 
 
 def project_path(path: Path):

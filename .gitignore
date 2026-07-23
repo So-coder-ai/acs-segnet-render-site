@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 static/results/
 .vercel/
+checkpoints/*.fp16.pth
+checkpoints/*.pth.tmp

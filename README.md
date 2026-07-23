@@ -11,8 +11,8 @@ This project is configured for Render with:
 - `.python-version` pinned to Python `3.11.9`.
 - CPU-only PyTorch in `requirements.txt`, without unused OpenCV, Matplotlib, or
   Albumentations packages.
-- One FP16 checkpoint, memory-mapped while loading, to fit within Render Free's
-  512 MB RAM limit.
+- An FP16 inference checkpoint generated during the build, then memory-mapped
+  while loading, to fit within Render Free's 512 MB RAM limit.
 - A single Uvicorn worker and a small upload limit so overlapping uploads cannot
   exhaust the instance.
 
@@ -24,6 +24,10 @@ Default deployed checkpoint:
 checkpoints/ACSSegNet_fold1_best.pth
 ```
 
+During a Render build, `build.sh` creates
+`checkpoints/ACSSegNet_fold1_best.fp16.pth` and the service loads that smaller
+inference checkpoint. Do not add the generated file to Git.
+
 The app supports multiple checkpoints through `MODEL_PATHS`, but a 3-fold ensemble is heavy on CPU hosting. Use one fold unless you upgrade the Render instance.
 
 ## Required Render Environment Variables
@@ -32,7 +36,7 @@ These are already included in `render.yaml`, but you can also set/override them 
 
 ```text
 PYTHON_VERSION=3.11.9
-MODEL_PATHS=checkpoints/ACSSegNet_fold1_best.pth
+MODEL_PATHS=checkpoints/ACSSegNet_fold1_best.fp16.pth
 CACHE_MODELS=1
 MODEL_DTYPE=float16
 TORCH_NUM_THREADS=1
@@ -49,8 +53,8 @@ PowerShell:
 cd C:\Users\narai\Documents\Codex\2026-07-08\build\outputs\acs-segnet
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 .\.venv\Scripts\Activate.ps1
-$env:MODEL_PATHS="checkpoints\ACSSegNet_fold1_best.pth"
-$env:CACHE_MODELS="0"
+$env:MODEL_PATHS="checkpoints\ACSSegNet_fold1_best.fp16.pth"
+$env:CACHE_MODELS="1"
 $env:TORCH_NUM_THREADS="1"
 python -m uvicorn app:app --reload
 ```
