@@ -4,7 +4,6 @@ import uuid
 import gc
 from pathlib import Path
 
-import cv2
 import numpy as np
 import torch
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -34,6 +33,10 @@ CFG = {
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "1")))
+MODEL_DTYPE_NAME = os.getenv("MODEL_DTYPE", "float16").lower()
+MODEL_DTYPE = torch.float16 if MODEL_DTYPE_NAME == "float16" else torch.float32
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
+MAX_IMAGE_DIM = int(os.getenv("MAX_IMAGE_DIM", "2048"))
 DEFAULT_CHECKPOINTS = [
     BASE_DIR / "checkpoints" / "ACSSegNet_fold0_best.pth",
     BASE_DIR / "checkpoints" / "ACSSegNet_fold1_best.pth",
@@ -73,19 +76,26 @@ def build_model():
             "https://github.com/NimaTorbati/ACS-SegNet.git into ./ACS-SegNet."
         ) from exc
 
-    return DualEncoderUNet(
-        unet_encoder_name=CFG["resnet_enc"],
-        unet_encoder_weights=None,
-        segformer_variant=CFG["segformer_var"],
-        classes=CFG["num_classes"],
-        decoder_channels=CFG["decoder_ch"],
-        simple_fusion=CFG["simple_fusion"],
-        regression=False,
-        in_channels=3,
-        model_depth=5,
-        IgnoreBottleNeck=False,
-        input_size=CFG["img_size"],
-    ).to(DEVICE)
+    # Construct directly in FP16: constructing FP32 then converting needs
+    # roughly 300 MB for this model and can exceed Render free during startup.
+    previous_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(MODEL_DTYPE)
+    try:
+        return DualEncoderUNet(
+            unet_encoder_name=CFG["resnet_enc"],
+            unet_encoder_weights=None,
+            segformer_variant=CFG["segformer_var"],
+            classes=CFG["num_classes"],
+            decoder_channels=CFG["decoder_ch"],
+            simple_fusion=CFG["simple_fusion"],
+            regression=False,
+            in_channels=3,
+            model_depth=5,
+            IgnoreBottleNeck=False,
+            input_size=CFG["img_size"],
+        ).to(device=DEVICE)
+    finally:
+        torch.set_default_dtype(previous_dtype)
 
 
 def load_state_into_model(checkpoint_path: Path):
@@ -95,7 +105,12 @@ def load_state_into_model(checkpoint_path: Path):
             "to checkpoints/ or set MODEL_PATHS on Render."
         )
     model = build_model()
-    state = torch.load(checkpoint_path, map_location=DEVICE)
+    # mmap prevents a second, fully resident 202 MB checkpoint copy while its
+    # tensors are copied into the model. This is essential on Render free.
+    try:
+        state = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)
+    except (TypeError, RuntimeError):
+        state = torch.load(checkpoint_path, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
     cleaned = {k.replace("module.", "", 1): v for k, v in state.items()}
@@ -157,14 +172,14 @@ def predict_probability(tensor):
     checkpoint_paths = configured_checkpoint_paths()
     if CACHE_MODELS:
         models = get_models()
-        with torch.no_grad():
+        with torch.inference_mode():
             probs = [torch.sigmoid(model(tensor))[0, 0].detach().cpu().numpy() for model in models]
         return np.mean(probs, axis=0), len(models)
 
     probs = []
     for checkpoint_path in checkpoint_paths:
         model = load_state_into_model(checkpoint_path)
-        with torch.no_grad():
+        with torch.inference_mode():
             probs.append(torch.sigmoid(model(tensor))[0, 0].detach().cpu().numpy())
         del model
         gc.collect()
@@ -178,6 +193,8 @@ def read_rgb_image(file_bytes: bytes):
         pil = Image.open(__import__("io").BytesIO(file_bytes)).convert("RGB")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Please upload a valid image file.") from exc
+    if pil.width > MAX_IMAGE_DIM or pil.height > MAX_IMAGE_DIM:
+        pil.thumbnail((MAX_IMAGE_DIM, MAX_IMAGE_DIM), Image.Resampling.LANCZOS)
     return np.array(pil)
 
 
@@ -186,9 +203,13 @@ def save_png(path: Path, array: np.ndarray):
 
 
 def colorize_probability(prob: np.ndarray):
-    heat = (np.clip(prob, 0, 1) * 255).astype(np.uint8)
-    heat = cv2.applyColorMap(heat, cv2.COLORMAP_INFERNO)
-    return cv2.cvtColor(heat, cv2.COLOR_BGR2RGB)
+    # A small built-in heatmap avoids importing OpenCV just for applyColorMap.
+    value = np.clip(prob, 0, 1)[..., None]
+    return (np.concatenate((
+        np.clip(2.2 * value - 0.2, 0, 1),
+        np.clip(2.0 * value - 0.65, 0, 1),
+        np.clip(1.25 - 2.4 * value, 0, 1),
+    ), axis=-1) * 255).astype(np.uint8)
 
 
 def make_overlay(image: np.ndarray, mask: np.ndarray):
@@ -227,6 +248,7 @@ def health():
         "model_loaded": _models is not None,
         "cache_models": CACHE_MODELS,
         "torch_num_threads": torch.get_num_threads(),
+        "model_dtype": MODEL_DTYPE_NAME,
         "model_error": _model_error,
     }
 
@@ -244,10 +266,13 @@ async def predict(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Upload an image file, preferably a PNG/JPEG H&E tile.")
 
-    image = read_rgb_image(await file.read())
+    file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Image must be {MAX_UPLOAD_BYTES // (1024 * 1024)} MB or smaller.")
+    image = read_rgb_image(file_bytes)
     original_h, original_w = image.shape[:2]
-    resized = cv2.resize(image, (CFG["img_size"], CFG["img_size"]), interpolation=cv2.INTER_AREA)
-    tensor = torch.tensor((resized.astype(np.float32) / 255.0).transpose(2, 0, 1)).unsqueeze(0).to(DEVICE)
+    resized = np.array(Image.fromarray(image).resize((CFG["img_size"], CFG["img_size"]), Image.Resampling.LANCZOS))
+    tensor = torch.from_numpy((resized.astype(np.float32) / 255.0).transpose(2, 0, 1)).unsqueeze(0).to(DEVICE, dtype=MODEL_DTYPE)
 
     try:
         prob, models_used = predict_probability(tensor)
@@ -255,8 +280,8 @@ async def predict(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     mask_small = (prob > CFG["threshold"]).astype(np.uint8) * 255
-    mask_full = cv2.resize(mask_small, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
-    prob_full = cv2.resize(prob, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+    mask_full = np.array(Image.fromarray(mask_small).resize((original_w, original_h), Image.Resampling.NEAREST))
+    prob_full = np.array(Image.fromarray(prob.astype(np.float32), mode="F").resize((original_w, original_h), Image.Resampling.BILINEAR))
     heatmap = colorize_probability(prob_full)
     overlay = make_overlay(image, mask_full)
 

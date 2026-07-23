@@ -9,8 +9,12 @@ This project is configured for Render with:
 - `render.yaml` Blueprint configuration.
 - `build.sh` to install dependencies, clone ACS-SegNet if needed, and patch SegFormer initialization.
 - `.python-version` pinned to Python `3.11.9`.
-- CPU-only PyTorch in `requirements.txt`.
-- One checkpoint by default to reduce memory pressure.
+- CPU-only PyTorch in `requirements.txt`, without unused OpenCV, Matplotlib, or
+  Albumentations packages.
+- One FP16 checkpoint, memory-mapped while loading, to fit within Render Free's
+  512 MB RAM limit.
+- A single Uvicorn worker and a small upload limit so overlapping uploads cannot
+  exhaust the instance.
 
 ## Checkpoint
 
@@ -29,7 +33,8 @@ These are already included in `render.yaml`, but you can also set/override them 
 ```text
 PYTHON_VERSION=3.11.9
 MODEL_PATHS=checkpoints/ACSSegNet_fold1_best.pth
-CACHE_MODELS=0
+CACHE_MODELS=1
+MODEL_DTYPE=float16
 TORCH_NUM_THREADS=1
 IMG_SIZE=256
 MASK_THRESHOLD=0.5
@@ -59,7 +64,8 @@ Open `http://127.0.0.1:8000`.
 3. In Render, choose `New -> Blueprint`.
 4. Select the GitHub repo.
 5. Render reads `render.yaml` automatically.
-6. After deployment, visit `/health`.
+6. Render reads the `free` plan from `render.yaml`. After deployment, visit
+   `/health`; it should report `model_dtype: "float16"`.
 
 Expected health fields:
 
@@ -74,6 +80,11 @@ Expected health fields:
 
 ## Notes
 
-- First prediction is slow because the model loads lazily.
-- The app uses CPU mode by default.
-- If prediction crashes on Render, upgrade RAM or keep `MODEL_PATHS` to a single fold.
+- The free Render instance has only 0.1 CPU, so the first prediction can be
+  slow. It also spins down after 15 minutes without traffic.
+- The model is intentionally limited to one checkpoint and one worker. Do not
+  add the other two checkpoints to `MODEL_PATHS` on a Free instance.
+- Uploaded images are capped at 8 MB and downscaled to 2048 px before output
+  generation to keep request memory bounded.
+- If a particular CPU reports an unsupported FP16 operation, set
+  `MODEL_DTYPE=float32`; that needs a larger paid instance.

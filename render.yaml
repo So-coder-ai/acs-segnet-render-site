@@ -2,9 +2,11 @@ services:
   - type: web
     name: acs-segnet
     env: python
-    plan: standard
+    # Free instances have a 512 MB RAM limit.  The application therefore
+    # loads one FP16 checkpoint and permits only one inference at a time.
+    plan: free
     buildCommand: "bash build.sh"
-    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 2"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -15,8 +17,16 @@ services:
       - key: MASK_THRESHOLD
         value: 0.5
       - key: CACHE_MODELS
-        value: 0
+        value: 1
+      - key: MODEL_DTYPE
+        value: float16
       - key: TORCH_NUM_THREADS
         value: 1
+      - key: MAX_UPLOAD_BYTES
+        value: 8388608
+      - key: MAX_IMAGE_DIM
+        value: 2048
       - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: 1
+      - key: PIP_NO_CACHE_DIR
         value: 1
